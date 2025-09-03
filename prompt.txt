@@ -1,0 +1,78 @@
+
+Project Title: ESP32-Based WiFi Security Analysis Firmware
+Objective: Create a firmware for the ESP32-WROOM-32D (38-pin, 4MB Flash) board using the ESP-IDF framework (C++). The firmware will act as a tool for educational purposes to analyze WiFi network security. The entire user interface will be a web page hosted on the ESP32 itself.
+Ethical & Legal Disclaimer: This firmware is to be developed strictly for educational and research purposes. It should only be used to test the security of networks for which you have explicit, written authorization. Unauthorized use against any network is illegal and unethical. The firmware should include a clear warning on its main web page about its intended use.
+Core Functional Requirements:
+The firmware must operate in three main modes, selectable from a web interface:
+ * Deauthentication Broadcast Attack
+ * Handshake Packet Capture Attack
+ * Evil Twin with Captive Portal Attack
+Component 1: System Core & Web Interface
+ * Access Point (AP) Mode:
+   * On boot, the ESP32 should create its own WiFi network (Soft AP).
+   * SSID: ESP32_PENTEST
+   * Password: 12345678
+   * Static IP: The ESP32 should assign itself the IP 192.168.4.1.
+ * Web Server & UI:
+   * Host a web server on 192.168.4.1. Use the ESPAsyncWebServer library for efficient, non-blocking handling of clients.
+   * The web interface should be a single-page application (SPA) style, using HTML, CSS, and JavaScript to update content dynamically without full page reloads.
+   * Memory Management: All web assets (HTML, CSS, JS files) must be stored in the ESP32's SPIFFS or LittleFS filesystem to conserve program memory, keeping in mind the 4MB total flash size.
+ * Main Page (/):
+   * When a user navigates to 192.168.4.1, this page loads.
+   * It should have a clean, intuitive layout with a title like "ESP32 WiFi Security Dashboard".
+   * There should be a "Scan for Networks" button.
+   * When clicked, it should make an AJAX call to a /scan endpoint on the server.
+   * The server will perform a WiFi scan and return a JSON list of available networks.
+   * The JavaScript on the page will then populate a table with the following columns for each network: SSID, MAC Address (BSSID), and a "Select" button.
+   * Once a network is selected, its SSID and MAC address should be displayed prominently as the "Current Target". Below this, the three attack options should become available.
+Component 2: Attack Modules
+Important: The firmware must use a state machine to ensure only one attack can run at a time.
+Attack 1: Deauthentication Broadcast
+ * UI: A "Start Deauth" button.
+ * Logic:
+   * When clicked, the ESP32 will start broadcasting 802.11 deauthentication frames to the broadcast address (FF:FF:FF:FF:FF:FF) on the target network's channel. The source MAC in the frame should be the target AP's MAC address.
+   * This will attempt to disconnect all clients from the target AP.
+   * The UI should update to show "Deauth Attack Running..." and the button should change to "Stop Attack".
+Attack 2: Handshake Packet Capture
+ * UI: A "Capture Handshake" button.
+ * Logic: This is a multi-step process designed to capture a WPA/WPA2 4-way handshake.
+   * Initiate Sniffing: Put the ESP32's WiFi radio into promiscuous mode on the target network's channel.
+   * Start Capture Loop:
+     * Send a deauthentication broadcast to the target network for 5 seconds to force a client to reconnect.
+     * Stop the deauth broadcast and listen silently for 30 seconds.
+     * Repeat this 5s/30s cycle.
+   * Packet Filtering & Storage:
+     * While sniffing, capture all packets but only save the ones essential for a handshake (especially EAPOL packets).
+     * Write these captured packets to a file (e.g., capture.pcap) in the SPIFFS/LittleFS. The packets must be formatted correctly according to the .pcap file specification.
+   * Termination Condition:
+     * Continuously monitor the size of capture.pcap.
+     * When the file size reaches 10 KB, automatically stop the entire attack (both the deauth loop and sniffing). This is a heuristic to assume a handshake has likely been captured without filling the limited storage.
+   * Download:
+     * Once the attack stops, the UI should show a "Download PCAP File" button.
+     * Clicking this button will allow the user to download the capture.pcap file from the ESP32. After download, the file on the ESP32 should be deleted to free up space.
+Attack 3: Evil Twin with Captive Portal
+ * UI: A "Start Evil Twin" button.
+ * Logic:
+   * Deauthenticate Real AP: Begin a continuous deauthentication broadcast against the target network (same as Attack 1). This is crucial to make clients drop the real network.
+   * Create Fake AP: Stop the ESP32's main ESP32_PENTEST AP. Immediately create a new, open (no password) Soft AP with the exact same SSID as the target network.
+   * DNS & Captive Portal:
+     * Start a DNS server on the ESP32. Configure it to respond to all DNS queries with the ESP32's own IP (192.168.4.1).
+     * When a client connects to the fake AP and tries to visit any website, the DNS will redirect them to the ESP32's web server.
+   * Serve Portal Page:
+     * The web server should serve a captive portal page. This page should mimic a typical "Network login" or "Router update required" page.
+     * It must contain a simple HTML form with a password input field and a "Connect" button.
+   * Password Validation:
+     * When the user submits a password, the form POSTs it to the ESP32.
+     * The ESP32 receives the submitted password.
+     * Crucial Step: In the background, the ESP32 must temporarily switch to STA (station) mode and try to connect to the real target network using the submitted password.
+   * Success/Failure:
+     * If the connection is successful: The password is correct!
+       * Display the correct password on the web UI.
+       * Immediately stop all attack activities: stop the deauth broadcast, shut down the fake AP, and return the ESP32 to its initial ESP32_PENTEST AP mode.
+     * If the connection fails: The password was incorrect.
+       * Re-serve the captive portal page to the victim, perhaps with a "Password incorrect, please try again" message.
+Final Implementation Notes for the AI:
+ * Libraries: Use WiFi.h, ESPAsyncWebServer, AsyncTCP, and DNSServer.h. For .pcap file creation, you may need to implement the file header structure manually.
+ * Modularity: Structure the code into logical files (e.g., web_server.cpp, attack_manager.cpp, wifi_utils.cpp) for better organization and maintenance.
+ * Error Handling: Implement robust error handling and provide feedback to the user via the web UI (e.g., "Target not found," "Failed to start AP").
+ * Resource Management: Be mindful of the ESP32's limited RAM and flash. Free memory where possible and keep the web assets optimized.
